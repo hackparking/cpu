@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPU Stress Test</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Arial', sans-serif;
+            color: white;
+        }
+        
+        #container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            display: block;
+        }
+        
+        .stats {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+            background: #333;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background: #555;
+        }
+        
+        .warning {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255,0,0,0.7);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            max-width: 400px;
+            z-index: 200;
+        }
+        
+        .blur-background {
+            filter: blur(5px);
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="canvas1"></canvas>
+        <canvas id="canvas2"></canvas>
+        <canvas id="canvas3"></canvas>
+        <canvas id="canvas4"></canvas>
+        
+        <div class="stats">
+            <h2>GPU Stress Test</h2>
+            <p>FPS: <span id="fps">0</span></p>
+            <p>Particles: <span id="particleCount">0</span></p>
+        </div>
+        
+        <div class="controls">
+            <button id="addParticles">Add Particles</button>
+            <button id="removeParticles">Remove Particles</button>
+            <button id="addEffect">Add Effect</button>
+            <button id="toggleWarning">Show Warning</button>
+        </div>
+        
+        <div class="warning" id="warning" style="display: none;">
+            <h2>WARNING: HIGH GPU LOAD</h2>
+            <p>This page is designed to stress test your GPU. Continuing may cause:</p>
+            <ul style="text-align: left;">
+                <li>High device temperature</li>
+                <li>Reduced performance</li>
+                <li>Increased power consumption</li>
+                <li>Possible fan noise</li>
+            </ul>
+            <button id="closeWarning">I Understand</button>
+        </div>
+    </div>
+    
+    <script>
+        // Configuration
+        const config = {
+            initialParticles: 5000,
+            maxParticles: 20000,
+            particleStep: 2000,
+            effectsRunning: 0,
+            maxEffects: 4,
+            fpsInterval: 1000,
+            lastFpsUpdate: 0,
+            frames: 0,
+            currentFps: 0,
+            mouseX: 0,
+            mouseY: 0
+        };
+        
+        // Canvas elements
+        const canvases = [
+            document.getElementById('canvas1'),
+            document.getElementById('canvas2'),
+            document.getElementById('canvas3'),
+            document.getElementById('canvas4')
+        ];
+        
+        // Contexts
+        const ctxs = canvases.map(canvas => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            return canvas.getContext('2d');
+        });
+        
+        // Particles array
+        let particles = [];
+        
+        // Initialize particles
+        function initParticles() {
+            particles = [];
+            for (let i = 0; i < config.initialParticles; i++) {
+                particles.push(createParticle());
+            }
+            updateParticleCount();
+        }
+        
+        // Create a single particle
+        function createParticle() {
+            return {
+                x: Math.random() * window.innerWidth,
+                y: Math.random() * window.innerHeight,
+                size: Math.random() * 4 + 1,
+                speedX: Math.random() * 3 - 1.5,
+                speedY: Math.random() * 3 - 1.5,
+                color: `hsl(${Math.random() * 360}, 100%, 50%)`
+            };
+        }
+        
+        // Update particle count display
+        function updateParticleCount() {
+            document.getElementById('particleCount').textContent = particles.length;
+        }
+        
+        // Add particles
+        function addParticles() {
+            if (particles.length >= config.maxParticles) return;
+            
+            for (let i = 0; i < config.particleStep; i++) {
+                particles.push(createParticle());
+            }
+            updateParticleCount();
+        }
+        
+        // Remove particles
+        function removeParticles() {
+            if (particles.length <= config.particleStep) return;
+            
+            particles.splice(0, config.particleStep);
+            updateParticleCount();
+        }
+        
+        // Add new effect
+        function addEffect() {
+            if (config.effectsRunning >= config.maxEffects) return;
+            config.effectsRunning++;
+        }
+        
+        // Remove effect
+        function removeEffect() {
+            if (config.effectsRunning <= 0) return;
+            config.effectsRunning--;
+        }
+        
+        // Update FPS counter
+        function updateFps() {
+            const now = performance.now();
+            if (now > config.lastFpsUpdate + config.fpsInterval) {
+                config.currentFps = Math.round((config.frames * 1000) / (now - config.lastFpsUpdate));
+                config.lastFpsUpdate = now;
+                config.frames = 0;
+                document.getElementById('fps').textContent = config.currentFps;
+            }
+        }
+        
+        // Ray marching shader effect
+        function renderRayMarching(ctx, canvas, time) {
+            if (!ctx || config.effectsRunning < 1) return;
+            
+            const imageData = ctx.createImageData(canvas.width, canvas.height);
+            const data = imageData.data;
+            
+            for (let y = 0; y < canvas.height; y++) {
+                for (let x = 0; x < canvas.width; x++) {
+                    const idx = (y * canvas.width + x) * 4;
+                    
+                    // Ray marching calculation (simplified for performance)
+                    const u = (x / canvas.width) * 2.0 - 1.0;
+                    const v = (y / canvas.height) * 2.0 - 1.0;
+                    
+                    // Create some animated fractal noise
+                    let col = Math.sin(u * 10.0 + time * 0.001) * Math.cos(v * 10.0 + time * 0.001);
+                    col = Math.abs(col);
+                    
+                    data[idx] = col * 255; // R
+                    data[idx + 1] = col * 155 + Math.sin(time * 0.001) * 100; // G
+                    data[idx + 2] = col * 55 + Math.cos(time * 0.002) * 200; // B
+                    data[idx + 3] = 255; // A
+                }
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+        
+        // Plasma effect
+        function renderPlasma(ctx, canvas, time) {
+            if (!ctx || config.effectsRunning < 2) return;
+            
+            const imageData = ctx.createImageData(canvas.width, canvas.height);
+            const data = imageData.data;
+            
+            for (let y = 0; y < canvas.height; y++) {
+                for (let x = 0; x < canvas.width; x++) {
+                    const idx = (y * canvas.width + x) * 4;
+                    
+                    // Plasma calculation
+                    const cx = x + 0.5 * Math.sin(time * 0.001);
+                    const cy = y + 0.5 * Math.cos(time * 0.0013);
+                    
+                    const v = Math.sin(x * 0.1 + time * 0.01) + 
+                              Math.sin(y * 0.1 + time * 0.012) + 
+                              Math.sin((x + y) * 0.1 + time * 0.015) + 
+                              Math.sin(Math.sqrt(x * x + y * y) * 0.1 + time * 0.02);
+                    
+                    const r = Math.sin(v * Math.PI) * 127 + 128;
+                    const g = Math.sin(v * Math.PI + 2 * Math.PI / 3) * 127 + 128;
+                    const b = Math.sin(v * Math.PI + 4 * Math.PI / 3) * 127 + 128;
+                    
+                    data[idx] = r;
+                    data[idx + 1] = g;
+                    data[idx + 2] = b;
+                    data[idx + 3] = 255;
+                }
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+        
+        // Fractal noise effect
+        function renderFractalNoise(ctx, canvas, time) {
+            if (!ctx || config.effectsRunning < 3) return;
+            
+            const imageData = ctx.createImageData(canvas.width, canvas.height);
+            const data = imageData.data;
+            
+            for (let y = 0; y < canvas.height; y++) {
+                for (let x = 0; x < canvas.width; x++) {
+                    const idx = (y * canvas.width + x) * 4;
+                    
+                    // Fractal noise calculation
+                    let nx = x / canvas.width - 0.5;
+                    let ny = y / canvas.height - 0.5;
+                    nx *= 8.0;
+                    ny *= 8.0;
+                    
+                    let v = 0.0;
+                    let amplitude = 1.0;
+                    
+                    for (let i = 0; i < 4; i++) {
+                        v += amplitude * (Math.sin(nx * Math.cos(time * 0.001) * 0.1) + 
+                                          Math.cos(ny * Math.sin(time * 0.0013) * 0.1));
+                        nx *= 2.0;
+                        ny *= 2.0;
+                        amplitude *= 0.5;
+                    }
+                    
+                    v = Math.abs(v);
+                    
+                    const r = v * 255;
+                    const g = v * 155 + Math.cos(time * 0.001) * 100;
+                    const b = v * 55 + Math.sin(time * 0.002) * 200;
+                    
+                    data[idx] = r;
+                    data[idx + 1] = g;
+                    data[idx + 2] = b;
+                    data[idx + 3] = 255;
+                }
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+        
+        // Particle physics effect
+        function renderParticlePhysics(ctx, canvas, time) {
+            if (!ctx || config.effectsRunning < 4) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Update particles
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                
+                // Mouse interaction
+                const dx = p.x - config.mouseX;
+                const dy = p.y - config.mouseY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < 100) {
+                    const angle = Math.atan2(dy, dx);
+                    const force = (100 - distance) / 50;
+                    p.speedX += Math.cos(angle) * force * 0.2;
+                    p.speedY += Math.sin(angle) * force * 0.2;
+                }
+                
+                // Physics
+                p.x += p.speedX;
+                p.y += p.speedY;
+                
+                // Bounce edges
+                if (p.x < 0 || p.x > canvas.width) {
+                    p.speedX *= -1;
+                    p.x = Math.max(0, Math.min(p.x, canvas.width));
+                }
+                
+                if (p.y < 0 || p.y > canvas.height) {
+                    p.speedY *= -1;
+                    p.y = Math.max(0, Math.min(p.y, canvas.height));
+                }
+                
+                // Render particle
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = 0.7;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            ctx.globalAlpha = 1.0;
+        }
+        
+        // Main animation loop
+        function animate(time) {
+            config.frames++;
+            updateFps();
+            
+            // Clear all canvases
+            canvases.forEach(canvas => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            });
+            
+            // Render different effects on each canvas
+            renderRayMarching(ctxs[0], canvases[0], time);
+            renderPlasma(ctxs[1], canvases[1], time);
+            renderFractalNoise(ctxs[2], canvases[2], time);
+            renderParticlePhysics(ctxs[3], canvases[3], time);
+            
+            requestAnimationFrame(animate);
+        }
+        
+        // Event listeners
+        window.addEventListener('resize', () => {
+            canvases.forEach(canvas => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            });
+        });
+        
+        document.getElementById('addParticles').addEventListener('click', addParticles);
+        document.getElementById('removeParticles').addEventListener('click', removeParticles);
+        document.getElementById('addEffect').addEventListener('click', addEffect);
+        document.getElementById('toggleWarning').addEventListener('click', () => {
+            const warning = document.getElementById('warning');
+            warning.style.display = warning.style.display === 'none' ? 'block' : 'none';
+            document.getElementById('container').classList.toggle('blur-background');
+        });
+        
+        document.getElementById('closeWarning').addEventListener('click', () => {
+            document.getElementById('warning').style.display = 'none';
+            document.getElementById('container').classList.remove('blur-background');
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            config.mouseX = e.clientX;
+            config.mouseY = e.clientY;
+        });
+        
+        // Initialize and start
+        initParticles();
+        animate(0);
+    </script>
+</body>
+</html>
+
